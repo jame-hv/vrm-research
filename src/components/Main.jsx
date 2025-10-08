@@ -8,7 +8,7 @@ import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { useRef } from "react";
 import { VRMAvatar } from "./VRMAvatar";
 
-export const Main = () => {
+export const Main = ({ speechText, speechMode, onSpeechEnd }) => {
   const controls = useRef();
 
   // select models
@@ -26,7 +26,11 @@ export const Main = () => {
       <directionalLight intensity={2} position={[10, 10, 5]} />
       <directionalLight intensity={1} position={[-10, 10, 5]} />
       <group position-y={-1.25}>
-        <VRMAvatar />
+        <VRMAvatar
+          speechText={speechText}
+          speechMode={speechMode}
+          onSpeechEnd={onSpeechEnd}
+        />
         <Gltf
           src="models/new-bg.glb"
           position-z={-0.5}

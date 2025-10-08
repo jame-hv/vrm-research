@@ -12,9 +12,14 @@ import { remapMixamoAnimationToVrm } from "../utils/remapMixamoAnimationToVrm";
 const tmpQuat = new Quaternion();
 const tmpEuler = new Euler();
 
-export const VRMAvatar = ({ ...props }) => {
+export const VRMAvatar = ({
+  speechText,
+  speechMode,
+  onSpeechEnd,
+  ...props
+}) => {
   const { scene, userData } = useGLTF(
-    `models/262410318834873893.vrm`,
+    `models/4145700180261837807.vrm`,
     undefined,
     undefined,
     (loader) => {
@@ -38,6 +43,11 @@ export const VRMAvatar = ({ ...props }) => {
 
   // State to track when VRM is fully loaded and ready
   const [isVrmReady, setIsVrmReady] = useState(false);
+
+  // Speech state
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const speechTimeoutRef = useRef(null);
+  const mouthAnimationRef = useRef(null);
 
   useEffect(() => {
     const vrm = userData.vrm;
@@ -72,6 +82,207 @@ export const VRMAvatar = ({ ...props }) => {
       setIsVrmReady(true);
     }, 100);
   }, [scene, userData.vrm]);
+
+  // Speech synthesis function with phoneme-based lip sync
+  const speak = useCallback(
+    (text, mode = "normal") => {
+      if (!text || isSpeaking) return;
+
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      // Configure voice based on mode
+      switch (mode) {
+        case "happy":
+          utterance.rate = 1.1;
+          utterance.pitch = 1.2;
+          utterance.volume = 0.9;
+          break;
+        case "sadly":
+          utterance.rate = 0.8;
+          utterance.pitch = 0.8;
+          utterance.volume = 0.7;
+          break;
+        default: // normal
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          utterance.volume = 0.8;
+          break;
+      }
+
+      setIsSpeaking(true);
+
+      // Phoneme-to-viseme mapping for lip sync
+      const analyzeTextForLipSync = (text) => {
+        const words = text.toLowerCase().split(/\s+/);
+        const visemes = [];
+
+        words.forEach((word) => {
+          for (let i = 0; i < word.length; i++) {
+            const char = word[i];
+            const nextChar = word[i + 1] || "";
+
+            // Map characters to mouth shapes (visemes)
+            if (["a", "á", "à"].includes(char)) {
+              visemes.push({ aa: 0.8, ih: 0, ee: 0, oh: 0, ou: 0 });
+            } else if (["e", "é", "è"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0, ee: 0.7, oh: 0, ou: 0 });
+            } else if (["i", "í", "ì", "y"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0.7, ee: 0.5, oh: 0, ou: 0 });
+            } else if (["o", "ó", "ò"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0, ee: 0, oh: 0.8, ou: 0.3 });
+            } else if (["u", "ú", "ù", "w"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0, ee: 0, oh: 0.2, ou: 0.8 });
+            } else if (["m", "b", "p"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0, ee: 0, oh: 0, ou: 0 }); // Closed mouth
+            } else if (["f", "v"].includes(char)) {
+              visemes.push({ aa: 0.2, ih: 0.1, ee: 0.3, oh: 0, ou: 0 });
+            } else if (["th", "dh"].includes(char + nextChar)) {
+              visemes.push({ aa: 0.3, ih: 0.2, ee: 0, oh: 0, ou: 0 });
+              i++; // Skip next char
+            } else if (["s", "z", "sh", "ch"].includes(char)) {
+              visemes.push({ aa: 0, ih: 0.4, ee: 0.3, oh: 0, ou: 0 });
+            } else if (["l", "n", "t", "d"].includes(char)) {
+              visemes.push({ aa: 0.2, ih: 0.3, ee: 0.2, oh: 0, ou: 0 });
+            } else if (["r"].includes(char)) {
+              visemes.push({ aa: 0.3, ih: 0, ee: 0, oh: 0.3, ou: 0 });
+            } else {
+              visemes.push({ aa: 0.2, ih: 0.1, ee: 0.1, oh: 0, ou: 0 }); // Neutral
+            }
+          }
+          // Add slight pause between words
+          visemes.push({ aa: 0, ih: 0, ee: 0, oh: 0, ou: 0 });
+        });
+
+        return visemes;
+      };
+
+      utterance.onstart = () => {
+        // Start mouth animation based on text analysis
+        if (mouthAnimationRef.current) {
+          clearInterval(mouthAnimationRef.current);
+        }
+
+        const visemes = analyzeTextForLipSync(text);
+        let visemeIndex = 0;
+        const totalDuration = (text.split(" ").length * 0.3) / utterance.rate; // Approximate duration
+        const intervalTime = (totalDuration * 1000) / visemes.length;
+
+        mouthAnimationRef.current = setInterval(() => {
+          if (userData.vrm && visemeIndex < visemes.length) {
+            const currentViseme = visemes[visemeIndex];
+            const intensity =
+              mode === "sadly" ? 0.7 : mode === "happy" ? 0.8 : 0.75;
+
+            userData.vrm.expressionManager.setValue(
+              "aa",
+              currentViseme.aa * intensity * 0.3
+            );
+            userData.vrm.expressionManager.setValue(
+              "ih",
+              currentViseme.ih * intensity * 0.3
+            );
+            userData.vrm.expressionManager.setValue(
+              "ee",
+              currentViseme.ee * intensity * 0.3
+            );
+            userData.vrm.expressionManager.setValue(
+              "oh",
+              currentViseme.oh * intensity * 0.3
+            );
+            userData.vrm.expressionManager.setValue(
+              "ou",
+              currentViseme.ou * intensity * 0.3
+            );
+
+            visemeIndex++;
+          }
+        }, Math.max(50, intervalTime));
+      };
+
+      utterance.onend = () => {
+        setIsSpeaking(false);
+
+        // Stop mouth animation
+        if (mouthAnimationRef.current) {
+          clearInterval(mouthAnimationRef.current);
+          mouthAnimationRef.current = null;
+        }
+
+        // Reset mouth expressions
+        if (userData.vrm) {
+          userData.vrm.expressionManager.setValue("aa", 0);
+          userData.vrm.expressionManager.setValue("ih", 0);
+          userData.vrm.expressionManager.setValue("ee", 0);
+          userData.vrm.expressionManager.setValue("oh", 0);
+          userData.vrm.expressionManager.setValue("ou", 0);
+        }
+
+        if (onSpeechEnd) onSpeechEnd();
+      };
+
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+        if (mouthAnimationRef.current) {
+          clearInterval(mouthAnimationRef.current);
+          mouthAnimationRef.current = null;
+        }
+        if (onSpeechEnd) onSpeechEnd();
+      };
+
+      speechSynthesis.speak(utterance);
+    },
+    [isSpeaking, userData.vrm, onSpeechEnd]
+  );
+
+  // Handle speech trigger from props
+  useEffect(() => {
+    if (speechText && speechMode && isVrmReady) {
+      speak(speechText, speechMode);
+    }
+  }, [speechText, speechMode, isVrmReady, speak]);
+
+  // Apply emotional expressions based on mode
+  useEffect(() => {
+    if (!userData.vrm || !isVrmReady || isSpeaking) return;
+
+    const applyEmotionalExpression = () => {
+      switch (speechMode) {
+        case "happy":
+          userData.vrm.expressionManager.setValue("happy", 0.25);
+          userData.vrm.expressionManager.setValue("relaxed", 0.25);
+          userData.vrm.expressionManager.setValue("sad", 0);
+          userData.vrm.expressionManager.setValue("angry", 0);
+          break;
+        case "sadly":
+          userData.vrm.expressionManager.setValue("sad", 0.7);
+          userData.vrm.expressionManager.setValue("happy", 0);
+          userData.vrm.expressionManager.setValue("relaxed", 0);
+          userData.vrm.expressionManager.setValue("angry", 0);
+          break;
+        default: // normal
+          userData.vrm.expressionManager.setValue("relaxed", 0.2);
+          userData.vrm.expressionManager.setValue("happy", 0);
+          userData.vrm.expressionManager.setValue("sad", 0);
+          userData.vrm.expressionManager.setValue("angry", 0);
+          break;
+      }
+    };
+
+    applyEmotionalExpression();
+  }, [speechMode, userData.vrm, isVrmReady, isSpeaking]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (mouthAnimationRef.current) {
+        clearInterval(mouthAnimationRef.current);
+      }
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current);
+      }
+      speechSynthesis.cancel();
+    };
+  }, []);
 
   const setResultsCallback = useVideoRecognition(
     (state) => state.setResultsCallback
@@ -241,8 +452,8 @@ export const VRMAvatar = ({ ...props }) => {
 
     // Smooth camera-based tracking when video is available
     if (videoElement) {
-      // Face expressions and mouth movements
-      if (riggedFace.current) {
+      // Face expressions and mouth movements (only if not speaking)
+      if (riggedFace.current && !isSpeaking) {
         const expressions = [
           { name: "aa", value: riggedFace.current.mouth.shape.A },
           { name: "ih", value: riggedFace.current.mouth.shape.I },
@@ -256,8 +467,24 @@ export const VRMAvatar = ({ ...props }) => {
         expressions.forEach((item) => {
           lerpExpression(item.name, item.value, FACE_LERP_FACTOR, delta);
         });
+      } else if (riggedFace.current && isSpeaking) {
+        // Only update eye blinking during speech
+        lerpExpression(
+          "blinkLeft",
+          1 - riggedFace.current.eye.l,
+          EYE_LERP_FACTOR,
+          delta
+        );
+        lerpExpression(
+          "blinkRight",
+          1 - riggedFace.current.eye.r,
+          EYE_LERP_FACTOR,
+          delta
+        );
+      }
 
-        // Smooth head movement
+      // Smooth head movement
+      if (riggedFace.current) {
         rotateBone("neck", riggedFace.current.head, BODY_LERP_FACTOR, delta, {
           x: 0.5,
           y: 0.5,
